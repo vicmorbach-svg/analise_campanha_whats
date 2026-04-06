@@ -49,7 +49,7 @@ def preprocessar_pagamentos(df_pagamentos):
 
     # Coluna 'N° Ligação' para ID do Cliente
     if 'N Ligação' in df_pagamentos.columns:
-        df_pagamentos['ID_Cliente'] = df_pagamentos['N° Ligação'].astype(str).str.strip()
+        df_pagamentos['ID_Cliente'] = df_pagamentos['N Ligação'].astype(str).str.strip()
     else:
         st.error("Coluna 'N° Ligação' não encontrada no arquivo de pagamentos. Verifique o cabeçalho.")
         return pd.DataFrame()
