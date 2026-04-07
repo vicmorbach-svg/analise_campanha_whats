@@ -258,10 +258,10 @@ if executar_analise:
                 df_clientes['MATRICULA_CLIENTE'].isin(matriculas_notificadas_validas)
             ].copy()
 
-            total_divida_notificados = df_clientes_notificados_com_divida['SITUACAO'].sum(
+            total_divida_notificados = df_clientes_notificados_com_divida['SITUACAO'].sum()
 
             st.subheader("Resultados da Análise da Campanha")
-            col1, col2, col3, col4, col5 = st.columns(5)
+            col1, col2, col3, col4, col5, col6, col7 = st.columns(7)
             with col1:
                 st.metric(label="Total de clientes notificados", value=f"{total_clientes_notificados}")
             with col2:
