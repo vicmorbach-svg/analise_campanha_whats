@@ -267,7 +267,7 @@ if executar_analise:
             with col1:
                 st.metric(label="Total de clientes notificados", value=f"{total_clientes_notificados}")
             with col2:
-                st.metric(label="Total da divida dos notificados", value=f"R$ {total_dividas_notificados:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+                st.metric(label="Total da divida dos notificados", value=f"R$ {total_divida_notificados:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
             with col3:
                 st.metric(label="Clientes que pagaram dentro da janela", value=f"{clientes_que_pagaram_matriculas}")
             with col4:
