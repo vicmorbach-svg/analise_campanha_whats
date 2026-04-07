@@ -246,7 +246,7 @@ if executar_analise:
             # Calcular taxa de eficiência
             taxa_eficiencia = (clientes_que_pagaram_matriculas / total_clientes_notificados * 100) if total_clientes_notificados > 0 else 0
             # Calcular taxa de eficiência valor
-            taxa_eficiencia = (valor_total_arrecadado / total_divida_notificados * 100) if total_divida_notificados > 0 else 0
+            taxa_eficiencia_valor = (valor_total_arrecadado / total_divida_notificados * 100)
 
             # Calcular ticket médio
             ticket_medio = valor_total_arrecadado / clientes_que_pagaram_matriculas
