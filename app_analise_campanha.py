@@ -5,6 +5,7 @@ import io
 import re
 import plotly.express as px
 
+
 # Configurações da página do Streamlit
 st.set_page_config(layout="wide", page_title="Análise de Campanha de Pagamentos")
 
