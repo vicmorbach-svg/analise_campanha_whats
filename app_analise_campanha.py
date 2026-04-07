@@ -240,16 +240,21 @@ if executar_analise:
             # Calcular taxa de eficiência
             taxa_eficiencia = (clientes_que_pagaram_matriculas / total_clientes_notificados * 100) if total_clientes_notificados > 0 else 0
 
+            # Calcular ticket médio
+            ticket_medio = valor_total_arrecadado / clientes_que_pagaram_matriculas 
+
             st.subheader("Resultados da Análise da Campanha")
-            col1, col2, col3, col4 = st.columns(4)
+            col1, col2, col3, col4, col5 = st.columns(5)
             with col1:
-                st.metric(label="Total de Clientes Notificados (Matrículas Únicas)", value=f"{total_clientes_notificados}")
+                st.metric(label="Total de clientes notificados", value=f"{total_clientes_notificados}")
             with col2:
-                st.metric(label="Clientes que Pagaram dentro da Janela", value=f"{clientes_que_pagaram_matriculas}")
+                st.metric(label="Clientes que pagaram dentro da janela", value=f"{clientes_que_pagaram_matriculas}")
             with col3:
-                st.metric(label="Valor Total Arrecadado na Campanha", value=f"R$ {valor_total_arrecadado:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+                st.metric(label="Valor total arrecadado na campanha", value=f"R$ {valor_total_arrecadado:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
             with col4:
-                st.metric(label="Taxa de Eficiência da Campanha", value=f"{taxa_eficiencia:,.2f}%".replace(",", "X").replace(".", ",").replace("X", "."))
+                st.metric(label="Taxa de eficiência da campanha", value=f"{taxa_eficiencia:,.2f}%".replace(",", "X").replace(".", ",").replace("X", "."))
+            with col5:
+                st.metric(label="Ticket médio"), value=f"R$ {ticket_medio:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
 
             if not df_pagamentos_campanha.empty:
                 st.subheader(f"Pagamentos por Dia Após o Envio da Notificação (Janela de {janela_dias} dias)")
