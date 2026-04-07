@@ -104,19 +104,25 @@ def load_and_process_clientes(uploaded_file):
         df = pd.read_excel(uploaded_file)
 
         # Verificar colunas essenciais
-        required_cols = ['TELEFONE', 'MATRICULA']
+        required_cols = ['TELEFONE', 'MATRICULA', 'SITUACAO']
         if not all(col in df.columns for col in required_cols):
-            st.error(f"Arquivo de Clientes: Colunas esperadas '{required_cols[0]}' e '{required_cols[1]}' não encontradas.")
+            st.error(f"Arquivo de Clientes: Colunas esperadas '{required_cols[0]}' e '{required_cols[1]}' ou '{required_cols[1]}' não encontradas.")
             return None
 
         # Selecionar e renomear colunas
-        df_clientes = df[['TELEFONE', 'MATRICULA']].copy()
+        df_clientes = df[['TELEFONE', 'MATRICULA', 'SITUACAO']].copy()
         df_clientes.rename(columns={'TELEFONE': 'TELEFONE_CLIENTE', 'MATRICULA': 'MATRICULA_CLIENTE'}, inplace=True)
 
         # Normalizar o telefone: remover '55' e '.0'
         df_clientes['TELEFONE_CLIENTE'] = df_clientes['TELEFONE_CLIENTE'].astype(str).str.replace(r'^55', '', regex=True).str.replace(r'\.0$', '', regex=True)
         df_clientes['TELEFONE_CLIENTE'] = df_clientes['TELEFONE_CLIENTE'].str.strip() # Remover espaços em branco
 
+        # Converter 'SITUACAO' para numérico, tratando erros e preenchendo nulos com 0
+        df_clientes['SITUACAO'] = pd.to_numeric(
+            df_clientes['SITUACAO'].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False),
+            errors='coerce'
+        ).fillna(0)
+        
         # Converter MATRICULA_CLIENTE para string e remover '.0'
         df_clientes['MATRICULA_CLIENTE'] = df_clientes['MATRICULA_CLIENTE'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
 
@@ -239,21 +245,36 @@ if executar_analise:
 
             # Calcular taxa de eficiência
             taxa_eficiencia = (clientes_que_pagaram_matriculas / total_clientes_notificados * 100) if total_clientes_notificados > 0 else 0
+            # Calcular taxa de eficiência valor
+            taxa_eficiencia = (valor_total_arrecadado / total_divida_notificados * 100) if total_divida_notificados > 0 else 0
 
             # Calcular ticket médio
-            ticket_medio = valor_total_arrecadado / clientes_que_pagaram_matriculas 
+            ticket_medio = valor_total_arrecadado / clientes_que_pagaram_matriculas
+
+             # --- NOVO CÁLCULO: Total da Dívida dos Clientes Notificados ---
+            # Filtrar df_clientes para obter apenas as matrículas que foram notificadas
+            matriculas_notificadas_validas = df_notificacoes_com_matricula['MATRICULA'].unique()
+            df_clientes_notificados_com_divida = df_clientes[
+                df_clientes['MATRICULA_CLIENTE'].isin(matriculas_notificadas_validas)
+            ].copy()
+
+            total_divida_notificados = df_clientes_notificados_com_divida['SITUACAO'].sum(
 
             st.subheader("Resultados da Análise da Campanha")
             col1, col2, col3, col4, col5 = st.columns(5)
             with col1:
                 st.metric(label="Total de clientes notificados", value=f"{total_clientes_notificados}")
             with col2:
-                st.metric(label="Clientes que pagaram dentro da janela", value=f"{clientes_que_pagaram_matriculas}")
+                st.metric(label="Total da divida dos notificados", value=f"R$ {total_dividas_notificados:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
             with col3:
-                st.metric(label="Valor total arrecadado na campanha", value=f"R$ {valor_total_arrecadado:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+                st.metric(label="Clientes que pagaram dentro da janela", value=f"{clientes_que_pagaram_matriculas}")
             with col4:
-                st.metric(label="Taxa de eficiência da campanha", value=f"{taxa_eficiencia:,.2f}%".replace(",", "X").replace(".", ",").replace("X", "."))
+                st.metric(label="Valor total arrecadado na campanha", value=f"R$ {valor_total_arrecadado:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
             with col5:
+                st.metric(label="Taxa de eficiência da campanha - Clientes", value=f"{taxa_eficiencia:,.2f}%".replace(",", "X").replace(".", ",").replace("X", "."))
+            with col6:
+                st.metric(label="Taxa de eficiência da campanha - Valor", value=f"{taxa_eficiencia_valor:,.2f}%".replace(",", "X").replace(".", ",").replace("X", "."))
+            with col7:
                 st.metric(label="Ticket médio", value=f"R$ {ticket_medio:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
 
             if not df_pagamentos_campanha.empty:
