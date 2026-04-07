@@ -43,7 +43,7 @@ def load_and_process_envios(uploaded_file):
         st.sidebar.success("Arquivo de Envios processado com sucesso.")
         return df_envios
     except Exception as e:
-        st.sidebar.error(f"Erro ao processar o arquivo de Envios: {e}")
+        st.sidebar.error(f"Erro ao processar arquivo de Envios: {e}")
         return None
 
 @st.cache_data
@@ -138,7 +138,7 @@ def load_and_process_clientes(uploaded_file):
         st.sidebar.success("Arquivo de Clientes processado com sucesso.")
         return df_clientes
     except Exception as e:
-        st.sidebar.error(f"Erro ao processar o arquivo de Clientes: {e}")
+        st.sidebar.error(f"Erro ao processar arquivo de Clientes: {e}")
         return None
 
 # --- Interface do Streamlit ---
@@ -221,9 +221,9 @@ if executar_analise:
             clientes_que_pagaram_matriculas = pagamentos_dentro_janela['MATRICULA'].nunique()
             valor_total_arrecadado = pagamentos_dentro_janela['VALOR_PAGO'].sum() if not pagamentos_dentro_janela.empty else 0
 
-            taxa_eficiencia = (clientes_que_pagaram_matriculas / total_clientes_notificados * 100) if total_clientes_notificados > 0 else 0
+            taxa_eficiencia_clientes = (clientes_que_pagaram_matriculas / total_clientes_notificados * 100) if total_clientes_notificados > 0 else 0
 
-            # --- NOVO CÁLCULO: Total da Dívida dos Clientes Notificados ---
+            # --- CÁLCULO: Total da Dívida dos Clientes Notificados ---
             # Filtrar df_clientes para obter apenas as matrículas que foram notificadas
             matriculas_notificadas_validas = df_notificacoes_com_matricula['MATRICULA'].unique()
             df_clientes_notificados_com_divida = df_clientes[
@@ -232,18 +232,27 @@ if executar_analise:
 
             total_divida_notificados = df_clientes_notificados_com_divida['SITUACAO'].sum()
 
+            # --- NOVOS CÁLCULOS: Taxa de Eficiência (Valor) e Ticket Médio ---
+            taxa_eficiencia_valor = (valor_total_arrecadado / total_divida_notificados * 100) if total_divida_notificados > 0 else 0
+            ticket_medio = (valor_total_arrecadado / clientes_que_pagaram_matriculas) if clientes_que_pagaram_matriculas > 0 else 0
+
+
             st.subheader("Resultados da Análise da Campanha")
-            col1, col2, col3, col4, col5 = st.columns(5)
+            col1, col2, col3, col4, col5, col6, col7 = st.columns(7)
             with col1:
-                st.metric(label="Clientes Notificados (com Matrícula)", value=f"{total_clientes_notificados}")
+                st.metric(label="Clientes Notificados (Matrículas Únicas)", value=f"{total_clientes_notificados}")
             with col2:
-                st.metric(label="Clientes que Pagaram na Janela", value=f"{clientes_que_pagaram_matriculas}")
-            with col3:
-                st.metric(label="Valor Total Arrecadado na Campanha", value=f"R$ {valor_total_arrecadado:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
-            with col4:
-                st.metric(label="Taxa de Eficiência da Campanha", value=f"{taxa_eficiencia:,.2f}%".replace(",", "X").replace(".", ",").replace("X", "."))
-            with col5:
                 st.metric(label="Total da Dívida dos Notificados", value=f"R$ {total_divida_notificados:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+            with col3:
+                st.metric(label="Clientes que Pagaram na Janela", value=f"{clientes_que_pagaram_matriculas}")
+            with col4:
+                st.metric(label="Valor Total Arrecadado na Campanha", value=f"R$ {valor_total_arrecadado:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+            with col5:
+                st.metric(label="Taxa de Eficiência (Clientes)", value=f"{taxa_eficiencia_clientes:,.2f}%".replace(",", "X").replace(".", ",").replace("X", "."))
+            with col6:
+                st.metric(label="Taxa de Eficiência (Valor)", value=f"{taxa_eficiencia_valor:,.2f}%".replace(",", "X").replace(".", ",").replace("X", "."))
+            with col7:
+                st.metric(label="Ticket Médio", value=f"R$ {ticket_medio:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
 
 
             st.markdown("---")
