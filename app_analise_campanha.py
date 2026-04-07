@@ -204,7 +204,7 @@ with st.sidebar:
                     st.metric(label="Clientes que Pagaram dentro da Janela", value="0")
                     st.metric(label="Valor Total Arrecadado na Campanha", value="R$ 0,00")
                     st.metric(label="Taxa de Eficiência da Campanha", value="0,00%")
-        return
+                    st.stop()
 
                 # 2. Cruzar com Pagamentos (por matrícula)
                 df_analise = pd.merge(
