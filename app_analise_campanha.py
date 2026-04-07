@@ -86,7 +86,7 @@ def preprocessar_pagamentos(uploaded_file):
 
         # Colunas esperadas e renomeadas (com tratamento para caracteres especiais)
         # Normaliza os nomes das colunas para remover espaços e caracteres especiais antes de procurar
-        df_pagamentos.columns = [col.strip().replace(' ', '_').replace('º', 'o').replace('°', '').replace('ç', 'c').replace('ã', 'a').replace('ú', 'u').replace('á', 'a').replace('é', 'e').replace('í', 'i').replace('ó', 'o').replace('ü', 'u').replace('ñ', 'n').replace('.', '').replace('(', '').replace(')', '').replace('/', '').replace('\\', '').replace('-', '_') for col in df_pagamentos.columns]
+        df_pagamentos.columns = [col.strip().replace(' ', '_').replace('º', '').replace('°', '').replace('ç', 'c').replace('ã', 'a').replace('ú', 'u').replace('á', 'a').replace('é', 'e').replace('í', 'i').replace('ó', 'o').replace('ü', 'u').replace('ñ', 'n').replace('.', '').replace('(', '').replace(')', '').replace('/', '').replace('\\', '').replace('-', '_') for col in df_pagamentos.columns]
 
         col_matricula = 'N_Ligacao' # Após normalização de 'Nº Ligação'
         col_data_pagto = 'Data_Pagto' # Após normalização de 'Data Pagto.'
