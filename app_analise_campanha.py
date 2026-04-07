@@ -252,7 +252,7 @@ if executar_analise:
 
              # --- NOVO CÁLCULO: Total da Dívida dos Clientes Notificados ---
             # Filtrar df_clientes para obter apenas as matrículas que foram notificadas
-            matriculas_notificadas_validas = df_notificacoes_com_matricula['MATRICULA'].unique()
+            matriculas_notificadas_validas = df_campanha_unique_notifications['MATRICULA'].unique()
             df_clientes_notificados_com_divida = df_clientes[
                 df_clientes['MATRICULA_CLIENTE'].isin(matriculas_notificadas_validas)
             ].copy()
