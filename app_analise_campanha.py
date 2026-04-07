@@ -1,222 +1,273 @@
 import streamlit as st
 import pandas as pd
-import io
-import re
+from datetime import timedelta
 
-# Função para normalizar nomes de colunas
-def normalize_column_name(col_name):
-    col_name = col_name.lower()
-    col_name = re.sub(r'[^\w\s]', '', col_name) # Remove caracteres especiais
-    col_name = re.sub(r'\s+', '_', col_name) # Substitui espaços por underscores
-    return col_name
+# Configurações da página do Streamlit
+st.set_page_config(layout="wide", page_title="Análise de Eficiência de Campanha")
 
-# Função para carregar e processar o arquivo de notificações
-def load_and_process_notifications(uploaded_file):
-    if uploaded_file.name.endswith('.xlsx'):
-        df = pd.read_excel(uploaded_file)
-    else:
-        st.error("Por favor, carregue um arquivo .xlsx para as notificações.")
-        return None
+st.title("📊 Análise de Eficiência de Campanha")
+st.markdown("---")
 
-    # Normalizar nomes de colunas
-    df.columns = [normalize_column_name(col) for col in df.columns]
+# Funções de pré-processamento
+@st.cache_data
+def preprocessar_envios(df_envios):
+    """
+    Pré-processa o DataFrame de envios (notificações).
+    Colunas esperadas: 'To' (telefone), 'Send At' (data de envio).
+    """
+    st.sidebar.info("Processando Base de Envios...")
 
-    # Mapear e renomear colunas essenciais
-    required_cols = {
-        'to': 'id_cliente',
-        'send_at': 'data_envio'
-    }
-    df = df.rename(columns=required_cols)
+    # Verificar se as colunas existem
+    required_cols = ['To', 'Send At']
+    if not all(col in df_envios.columns for col in required_cols):
+        st.error(f"Base de Envios: Colunas esperadas '{required_cols}' não encontradas. Verifique o arquivo.")
+        return pd.DataFrame()
 
-    # Verificar se as colunas essenciais existem após o renomeio
-    if 'id_cliente' not in df.columns or 'data_envio' not in df.columns:
-        st.error(f"As colunas 'To' e 'Send At' (ou suas versões normalizadas) são obrigatórias no arquivo de notificações.")
-        return None
+    df_envios = df_envios.copy()
 
-    # Limpar IDs de cliente (remover .0 se for float)
-    df['id_cliente'] = df['id_cliente'].astype(str).str.replace(r'\.0$', '', regex=True)
+    # Limpar linhas com valores nulos nas colunas essenciais
+    df_envios.dropna(subset=['To', 'Send At'], inplace=True)
 
-    # Converter 'data_envio' para datetime
-    df['data_envio'] = pd.to_datetime(df['data_envio'], errors='coerce', dayfirst=True)
-    df = df.dropna(subset=['data_envio'])
+    # Converter 'To' para string e limpar (remover '.0' e '55')
+    df_envios['To'] = df_envios['To'].astype(str).str.replace(r'\.0$', '', regex=True)
+    df_envios['To'] = df_envios['To'].apply(lambda x: x[2:] if x.startswith('55') and len(x) > 2 else x)
+    df_envios['To'] = df_envios['To'].str.strip() # Remover espaços em branco
 
-    # Remover duplicatas de notificações para o mesmo cliente na mesma data
-    df = df.drop_duplicates(subset=['id_cliente', 'data_envio'])
+    # Converter 'Send At' para datetime
+    df_envios['Send At'] = pd.to_datetime(df_envios['Send At'], errors='coerce', dayfirst=True)
+    df_envios.dropna(subset=['Send At'], inplace=True) # Remover linhas com datas inválidas
 
-    return df
+    # Renomear colunas para padronização
+    df_envios.rename(columns={'To': 'TELEFONE_ENVIO', 'Send At': 'DATA_ENVIO'}, inplace=True)
 
-# Função para carregar e processar o arquivo de pagamentos
-def load_and_process_payments(uploaded_file):
-    if uploaded_file.name.endswith('.xlsx'):
-        df = pd.read_excel(uploaded_file)
-    elif uploaded_file.name.endswith('.csv'):
-        # Tentar ler CSV com diferentes delimitadores
+    # Remover duplicatas de envio para o mesmo telefone na mesma data (considerar apenas o primeiro envio)
+    df_envios.sort_values(by='DATA_ENVIO', inplace=True)
+    df_envios.drop_duplicates(subset=['TELEFONE_ENVIO', 'DATA_ENVIO'], keep='first', inplace=True)
+
+    return df_envios[['TELEFONE_ENVIO', 'DATA_ENVIO']]
+
+@st.cache_data
+def preprocessar_pagamentos(df_pagamentos):
+    """
+    Pré-processa o DataFrame de pagamentos.
+    Colunas esperadas: 'N° Ligação' (matrícula), 'Data Pagto.' (data pagamento), 'Val. Autenticado' (valor).
+    """
+    st.sidebar.info("Processando Base de Pagamentos...")
+
+    # Verificar se as colunas existem
+    required_cols = ['N° Ligação', 'Data Pagto.', 'Val. Autenticado']
+    if not all(col in df_pagamentos.columns for col in required_cols):
+        st.error(f"Base de Pagamentos: Colunas esperadas '{required_cols}' não encontradas. Verifique o arquivo.")
+        return pd.DataFrame()
+
+    df_pagamentos = df_pagamentos.copy()
+
+    # Limpar linhas com valores nulos nas colunas essenciais
+    df_pagamentos.dropna(subset=['N° Ligação', 'Data Pagto.', 'Val. Autenticado'], inplace=True)
+
+    # Converter 'N° Ligação' para string e limpar (remover '.0')
+    df_pagamentos['N° Ligação'] = df_pagamentos['N° Ligação'].astype(str).str.replace(r'\.0$', '', regex=True)
+    df_pagamentos['N° Ligação'] = df_pagamentos['N° Ligação'].str.strip() # Remover espaços em branco
+
+    # Converter 'Data Pagto.' para datetime
+    df_pagamentos['Data Pagto.'] = pd.to_datetime(df_pagamentos['Data Pagto.'], errors='coerce', dayfirst=True)
+    df_pagamentos.dropna(subset=['Data Pagto.'], inplace=True) # Remover linhas com datas inválidas
+
+    # Tratar 'Val. Autenticado' para formato numérico brasileiro (vírgula como decimal)
+    df_pagamentos['Val. Autenticado'] = df_pagamentos['Val. Autenticado'].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
+    df_pagamentos['Val. Autenticado'] = pd.to_numeric(df_pagamentos['Val. Autenticado'], errors='coerce')
+    df_pagamentos.dropna(subset=['Val. Autenticado'], inplace=True) # Remover linhas com valores inválidos
+    df_pagamentos = df_pagamentos[df_pagamentos['Val. Autenticado'] > 0] # Considerar apenas pagamentos com valor > 0
+
+    # Renomear colunas para padronização
+    df_pagamentos.rename(columns={
+        'N° Ligação': 'MATRICULA_PAGAMENTO',
+        'Data Pagto.': 'DATA_PAGAMENTO',
+        'Val. Autenticado': 'VALOR_PAGO'
+    }, inplace=True)
+
+    return df_pagamentos[['MATRICULA_PAGAMENTO', 'DATA_PAGAMENTO', 'VALOR_PAGO']]
+
+@st.cache_data
+def preprocessar_identificacao(df_identificacao):
+    """
+    Pré-processa o DataFrame de identificação de clientes.
+    Colunas esperadas: 'TELEFONE', 'MATRICULA'.
+    """
+    st.sidebar.info("Processando Base de Identificação de Clientes...")
+
+    # Verificar se as colunas existem
+    required_cols = ['TELEFONE', 'MATRICULA']
+    if not all(col in df_identificacao.columns for col in required_cols):
+        st.error(f"Base de Identificação: Colunas esperadas '{required_cols}' não encontradas. Verifique o arquivo.")
+        return pd.DataFrame()
+
+    df_identificacao = df_identificacao.copy()
+
+    # Limpar linhas com valores nulos nas colunas essenciais
+    df_identificacao.dropna(subset=['TELEFONE', 'MATRICULA'], inplace=True)
+
+    # Converter para string e limpar (remover '.0')
+    df_identificacao['TELEFONE'] = df_identificacao['TELEFONE'].astype(str).str.replace(r'\.0$', '', regex=True)
+    df_identificacao['MATRICULA'] = df_identificacao['MATRICULA'].astype(str).str.replace(r'\.0$', '', regex=True)
+    df_identificacao['TELEFONE'] = df_identificacao['TELEFONE'].str.strip() # Remover espaços em branco
+    df_identificacao['MATRICULA'] = df_identificacao['MATRICULA'].str.strip() # Remover espaços em branco
+
+    # Renomear colunas para padronização
+    df_identificacao.rename(columns={
+        'TELEFONE': 'TELEFONE_CLIENTE',
+        'MATRICULA': 'MATRICULA_CLIENTE'
+    }, inplace=True)
+
+    # Remover duplicatas, mantendo a primeira ocorrência
+    df_identificacao.drop_duplicates(subset=['TELEFONE_CLIENTE', 'MATRICULA_CLIENTE'], keep='first', inplace=True)
+
+    return df_identificacao[['TELEFONE_CLIENTE', 'MATRICULA_CLIENTE']]
+
+@st.cache_data
+def carregar_arquivo(uploaded_file):
+    """Função para carregar arquivos CSV ou XLSX."""
+    if uploaded_file is not None:
+        file_extension = uploaded_file.name.split('.')[-1]
         try:
-            df = pd.read_csv(uploaded_file, sep=';', encoding='latin1', on_bad_lines='skip')
-        except Exception:
-            uploaded_file.seek(0) # Resetar o ponteiro do arquivo
-            try:
-                df = pd.read_csv(uploaded_file, sep=',', encoding='latin1', on_bad_lines='skip')
-            except Exception as e:
-                st.error(f"Erro ao ler o arquivo CSV de pagamentos: {e}. Verifique o delimitador e a codificação.")
-                return None
-    else:
-        st.error("Por favor, carregue um arquivo .xlsx ou .csv para os pagamentos.")
-        return None
-
-    # Normalizar nomes de colunas
-    df.columns = [normalize_column_name(col) for col in df.columns]
-
-    # Mapear e renomear colunas essenciais
-    required_cols = {
-        'n_ligaзгo': 'id_cliente', # Coluna 'Nє Ligaзгo'
-        'data_pagto': 'data_pagamento', # Coluna 'Data Pagto.'
-        'valor_pago': 'valor_pago' # Coluna 'Valor Pago'
-    }
-    df = df.rename(columns=required_cols)
-
-    # Verificar se as colunas essenciais existem após o renomeio
-    if 'id_cliente' not in df.columns or 'data_pagamento' not in df.columns or 'valor_pago' not in df.columns:
-        st.error(f"As colunas 'Nє Ligaзгo', 'Data Pagto.' e 'Valor Pago' (ou suas versões normalizadas) são obrigatórias no arquivo de pagamentos.")
-        return None
-
-    # Limpar IDs de cliente (remover .0 se for float)
-    df['id_cliente'] = df['id_cliente'].astype(str).str.replace(r'\.0$', '', regex=True)
-
-    # Converter 'data_pagamento' para datetime
-    df['data_pagamento'] = pd.to_datetime(df['data_pagamento'], errors='coerce', dayfirst=True)
-    df = df.dropna(subset=['data_pagamento'])
-
-    # Tratar a coluna 'valor_pago'
-    # Remover pontos de milhar e substituir vírgulas por pontos decimais
-    df['valor_pago'] = df['valor_pago'].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
-    df['valor_pago'] = pd.to_numeric(df['valor_pago'], errors='coerce')
-    df = df.dropna(subset=['valor_pago'])
-
-    # Remover linhas onde o valor pago é 0 ou negativo, pois não representam um pagamento efetivo
-    df = df[df['valor_pago'] > 0]
-
-    return df
-
-# Configuração da página Streamlit
-st.set_page_config(layout="wide", page_title="Análise de Eficiência de Campanha de Cobrança")
-
-st.title("Análise de Eficiência de Campanha de Cobrança via WhatsApp")
-
-st.markdown("""
-    Este aplicativo permite que você analise a eficiência de suas campanhas de cobrança via WhatsApp.
-    Faça o upload de dois arquivos:
-    1.  **Notificações:** Contém os registros de envio das mensagens (colunas `To` e `Send At`).
-    2.  **Pagamentos:** Contém os registros de pagamentos dos clientes (colunas `Nє Ligaзгo`, `Data Pagto.` e `Valor Pago`).
-
-    O script irá cruzar as informações, identificar pagamentos que ocorreram dentro de uma janela definida
-    após o envio da notificação e calcular os valores envolvidos.
-""")
-
-# Barra lateral para uploads e parâmetros
-st.sidebar.header("Upload de Arquivos e Parâmetros")
-
-uploaded_notifications_file = st.sidebar.file_uploader(
-    "1. Carregue o arquivo de Notificações (.xlsx)",
-    type=["xlsx"],
-    key="notifications_file"
-)
-
-uploaded_payments_file = st.sidebar.file_uploader(
-    "2. Carregue o arquivo de Pagamentos (.xlsx ou .csv)",
-    type=["xlsx", "csv"],
-    key="payments_file"
-)
-
-days_window = st.sidebar.slider(
-    "3. Defina a janela de dias para considerar o pagamento da campanha:",
-    min_value=1,
-    max_value=90,
-    value=7,
-    help="Um pagamento será considerado da campanha se ocorrer até X dias após a data de envio da notificação."
-)
-
-if st.sidebar.button("Executar Análise"):
-    if uploaded_notifications_file is not None and uploaded_payments_file is not None:
-        st.info("Carregando e processando arquivos...")
-
-        df_notifications = load_and_process_notifications(uploaded_notifications_file)
-        df_payments = load_and_process_payments(uploaded_payments_file)
-
-        if df_notifications is not None and df_payments is not None:
-            st.success("Arquivos carregados e processados com sucesso!")
-
-            # Exibir informações básicas dos DataFrames
-            st.subheader("Visão Geral dos Dados Carregados")
-            st.write("---")
-            st.write("### Notificações (primeiras 5 linhas)")
-            st.dataframe(df_notifications.head())
-            st.write(f"Total de notificações únicas: {len(df_notifications)}")
-            st.write("---")
-            st.write("### Pagamentos (primeiras 5 linhas)")
-            st.dataframe(df_payments.head())
-            st.write(f"Total de pagamentos válidos: {len(df_payments)}")
-            st.write("---")
-
-            st.subheader("Realizando o Cruzamento de Dados...")
-
-            # Realizar o merge dos dataframes
-            # Usamos um merge externo para manter todos os registros e ver o que não cruzou
-            df_merged = pd.merge(df_notifications, df_payments, on='id_cliente', how='left', suffixes=('_notif', '_pagto'))
-
-            # Filtrar pagamentos que ocorreram dentro da janela
-            df_merged['dias_para_pagamento'] = (df_merged['data_pagamento'] - df_merged['data_envio']).dt.days
-
-            # Pagamentos da campanha: data_pagamento >= data_envio E dias_para_pagamento <= days_window
-            df_campaign_payments = df_merged[
-                (df_merged['data_pagamento'] >= df_merged['data_envio']) &
-                (df_merged['dias_para_pagamento'] <= days_window)
-            ].copy()
-
-            # Remover duplicatas de pagamentos para o mesmo cliente na mesma janela de notificação
-            # Se um cliente pagou várias vezes dentro da janela de uma notificação, consideramos o primeiro pagamento válido
-            # Ou, se houver múltiplas notificações para o mesmo cliente, e ele pagou, queremos associar ao primeiro envio relevante
-            # Para simplificar, vamos considerar cada par (id_cliente, data_envio) como uma "oportunidade" de campanha
-            # E para cada oportunidade, o primeiro pagamento dentro da janela.
-            # Para a análise de eficiência, o que importa é se HOUVE um pagamento.
-            df_campaign_payments_unique = df_campaign_payments.sort_values(by=['id_cliente', 'data_envio', 'data_pagamento']).drop_duplicates(subset=['id_cliente', 'data_envio'])
-
-
-            st.subheader("Resultados da Análise")
-            st.markdown("---")
-
-            total_notificacoes = len(df_notifications)
-            total_clientes_notificados = df_notifications['id_cliente'].nunique()
-
-            total_pagamentos_campanha = len(df_campaign_payments_unique)
-            clientes_pagaram_campanha = df_campaign_payments_unique['id_cliente'].nunique()
-            valor_total_pago_campanha = df_campaign_payments_unique['valor_pago'].sum()
-
-            st.write(f"**Total de Notificações Enviadas:** {total_notificacoes}")
-            st.write(f"**Total de Clientes Notificados (únicos):** {total_clientes_notificados}")
-            st.write(f"**Janela de Dias Considerada:** {days_window} dias")
-            st.markdown("---")
-
-            st.write(f"**Número de Pagamentos Atribuídos à Campanha:** {total_pagamentos_campanha}")
-            st.write(f"**Número de Clientes que Pagaram Após a Notificação (dentro da janela):** {clientes_pagaram_campanha}")
-            st.write(f"**Valor Total Arrecadado Atribuído à Campanha:** R$ {valor_total_pago_campanha:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
-            st.markdown("---")
-
-            if total_clientes_notificados > 0:
-                taxa_conversao_clientes = (clientes_pagaram_campanha / total_clientes_notificados) * 100
-                st.write(f"**Taxa de Conversão (Clientes):** {taxa_conversao_clientes:.2f}%")
+            if file_extension == 'csv':
+                # Tentar ler com diferentes delimitadores
+                try:
+                    df = pd.read_csv(uploaded_file, sep=';', encoding='utf-8')
+                except Exception:
+                    uploaded_file.seek(0) # Resetar o ponteiro do arquivo
+                    df = pd.read_csv(uploaded_file, sep=',', encoding='utf-8')
+            elif file_extension in ['xlsx', 'xls']:
+                df = pd.read_excel(uploaded_file)
             else:
-                st.write("**Taxa de Conversão (Clientes):** Não foi possível calcular (nenhum cliente notificado).")
+                st.error("Formato de arquivo não suportado. Por favor, use .csv ou .xlsx.")
+                return pd.DataFrame()
+            return df
+        except Exception as e:
+            st.error(f"Erro ao carregar o arquivo: {e}. Verifique o formato e o conteúdo.")
+            return pd.DataFrame()
+    return pd.DataFrame()
 
+# --- Barra Lateral para Upload de Arquivos e Parâmetros ---
+st.sidebar.header("Upload de Arquivos")
+
+uploaded_file_envios = st.sidebar.file_uploader(
+    "1. Carregar Base de Envios (Notificações - .xlsx)",
+    type=["xlsx"],
+    key="envios_uploader"
+)
+
+uploaded_file_pagamentos = st.sidebar.file_uploader(
+    "2. Carregar Base de Pagamentos (.csv ou .xlsx)",
+    type=["csv", "xlsx"],
+    key="pagamentos_uploader"
+)
+
+uploaded_file_identificacao = st.sidebar.file_uploader(
+    "3. Carregar Base de Identificação de Clientes (.xlsx)",
+    type=["xlsx"],
+    key="identificacao_uploader"
+)
+
+st.sidebar.header("Parâmetros da Análise")
+window_days = st.sidebar.slider(
+    "Janela de dias para considerar o pagamento após a notificação:",
+    min_value=1, max_value=60, value=10
+)
+
+st.sidebar.markdown("---")
+run_analysis = st.sidebar.button("Executar Análise 🚀")
+
+# --- Lógica Principal ---
+if run_analysis:
+    if uploaded_file_envios and uploaded_file_pagamentos and uploaded_file_identificacao:
+        df_envios_raw = carregar_arquivo(uploaded_file_envios)
+        df_pagamentos_raw = carregar_arquivo(uploaded_file_pagamentos)
+        df_identificacao_raw = carregar_arquivo(uploaded_file_identificacao)
+
+        if not df_envios_raw.empty and not df_pagamentos_raw.empty and not df_identificacao_raw.empty:
+            df_envios = preprocessar_envios(df_envios_raw)
+            df_pagamentos = preprocessar_pagamentos(df_pagamentos_raw)
+            df_identificacao = preprocessar_identificacao(df_identificacao_raw)
+
+            if df_envios.empty or df_pagamentos.empty or df_identificacao.empty:
+                st.error("Um ou mais DataFrames estão vazios após o pré-processamento. Verifique as mensagens de erro acima e os arquivos.")
+                st.stop()
+
+            st.subheader("Pré-visualização dos Dados Processados")
+            st.write("Base de Envios (Notificações):")
+            st.dataframe(df_envios.head())
+            st.write("Base de Pagamentos:")
+            st.dataframe(df_pagamentos.head())
+            st.write("Base de Identificação de Clientes:")
+            st.dataframe(df_identificacao.head())
             st.markdown("---")
-            st.subheader("Detalhes dos Pagamentos Atribuídos à Campanha")
-            if not df_campaign_payments_unique.empty:
-                st.dataframe(df_campaign_payments_unique[[
-                    'id_cliente', 'data_envio', 'data_pagamento', 'valor_pago', 'dias_para_pagamento'
-                ]].sort_values(by='data_envio'))
 
-                # Opção para download
-                csv_output = df_campaign_payments_unique.to_csv(index=False, decimal=',', sep=';', encoding='latin1')
+            st.subheader("Realizando Cruzamento de Dados...")
+
+            # 1. Cruzar Envios com Identificação de Clientes (pelo telefone)
+            # Isso adiciona a MATRICULA_CLIENTE à base de envios
+            df_envios_com_matricula = pd.merge(
+                df_envios,
+                df_identificacao,
+                left_on='TELEFONE_ENVIO',
+                right_on='TELEFONE_CLIENTE',
+                how='inner' # Apenas envios que têm um cliente correspondente na base de identificação
+            )
+
+            if df_envios_com_matricula.empty:
+                st.warning("Nenhum envio pôde ser associado a uma matrícula de cliente. Verifique as colunas 'To' (envios) e 'TELEFONE' (identificação).")
+                st.stop()
+
+            # 2. Cruzar o resultado com a Base de Pagamentos (pela matrícula)
+            # Isso traz os pagamentos para cada notificação que tem uma matrícula associada
+            df_merged = pd.merge(
+                df_envios_com_matricula,
+                df_pagamentos,
+                left_on='MATRICULA_CLIENTE',
+                right_on='MATRICULA_PAGAMENTO',
+                how='left' # Manter todas as notificações, mesmo que não haja pagamento
+            )
+
+            # Calcular a data limite para o pagamento
+            df_merged['DATA_LIMITE_PAGAMENTO'] = df_merged['DATA_ENVIO'] + timedelta(days=window_days)
+
+            # Identificar pagamentos dentro da janela
+            df_merged['PAGAMENTO_DENTRO_JANELA'] = (
+                (df_merged['DATA_PAGAMENTO'] >= df_merged['DATA_ENVIO']) &
+                (df_merged['DATA_PAGAMENTO'] <= df_merged['DATA_LIMITE_PAGAMENTO'])
+            )
+
+            # Filtrar apenas os pagamentos que ocorreram dentro da janela
+            pagamentos_campanha = df_merged[df_merged['PAGAMENTO_DENTRO_JANELA']].copy()
+
+            st.subheader("Resultados da Análise de Eficiência da Campanha")
+
+            total_clientes_notificados = df_envios_com_matricula['MATRICULA_CLIENTE'].nunique()
+
+            if not pagamentos_campanha.empty:
+                # Contar clientes únicos que pagaram dentro da janela
+                clientes_que_pagaram = pagamentos_campanha['MATRICULA_CLIENTE'].nunique()
+                valor_total_arrecadado = pagamentos_campanha['VALOR_PAGO'].sum()
+                taxa_eficiencia = (clientes_que_pagaram / total_clientes_notificados) * 100 if total_clientes_notificados > 0 else 0
+
+                st.metric(label="Total de Clientes Notificados (com Matrícula)", value=f"{total_clientes_notificados}")
+                st.metric(label="Clientes que Pagaram dentro da Janela", value=f"{clientes_que_pagaram}")
+                st.metric(label="Valor Total Arrecadado na Campanha", value=f"R$ {valor_total_arrecadado:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+                st.metric(label="Taxa de Eficiência da Campanha", value=f"{taxa_eficiencia:,.2f}%".replace(",", "X").replace(".", ",").replace("X", "."))
+
+                st.markdown("---")
+                st.subheader("Detalhes dos Pagamentos Atribuídos à Campanha")
+                # Selecionar e exibir colunas relevantes para o detalhe
+                pagamentos_detalhe = pagamentos_campanha[[
+                    'TELEFONE_ENVIO', 'MATRICULA_CLIENTE', 'DATA_ENVIO',
+                    'DATA_PAGAMENTO', 'VALOR_PAGO', 'DATA_LIMITE_PAGAMENTO'
+                ]].sort_values(by='DATA_ENVIO').reset_index(drop=True)
+
+                st.dataframe(pagamentos_detalhe)
+
+                # Botão de download
+                csv_output = pagamentos_detalhe.to_csv(index=False, sep=';', decimal=',', encoding='utf-8-sig')
                 st.download_button(
                     label="Baixar Pagamentos da Campanha (CSV)",
                     data=csv_output,
@@ -225,8 +276,12 @@ if st.sidebar.button("Executar Análise"):
                 )
             else:
                 st.info("Nenhum pagamento encontrado dentro da janela definida para a campanha.")
+                st.metric(label="Total de Clientes Notificados (com Matrícula)", value=f"{total_clientes_notificados}")
+                st.metric(label="Clientes que Pagaram dentro da Janela", value="0")
+                st.metric(label="Valor Total Arrecadado na Campanha", value="R$ 0,00")
+                st.metric(label="Taxa de Eficiência da Campanha", value="0,00%")
 
         else:
-            st.error("Não foi possível processar um ou ambos os arquivos. Verifique os formatos e as colunas esperadas.")
+            st.error("Não foi possível processar um ou mais arquivos. Verifique os formatos e as colunas esperadas.")
     else:
-        st.warning("Por favor, carregue ambos os arquivos para iniciar a análise.")
+        st.warning("Por favor, carregue todos os três arquivos para iniciar a análise.")
