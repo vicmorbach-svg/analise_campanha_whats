@@ -91,6 +91,9 @@ def load_and_process_pagamentos(uploaded_file):
         df_pagamentos['VALOR_PAGO'] = pd.to_numeric(df_pagamentos['VALOR_PAGO'], errors='coerce')
         df_pagamentos.dropna(subset=['VALOR_PAGO'], inplace=True) # Remover linhas com valores inválidos
 
+        # Filtrar pagamentos com valor maior que zero
+        df_pagamentos = df_pagamentos[df_pagamentos['VALOR_PAGO'] > 0].copy()
+
         st.sidebar.success("Arquivo de Pagamentos processado com sucesso!")
         return df_pagamentos
     except Exception as e:
@@ -103,15 +106,15 @@ def load_and_process_clientes(uploaded_file):
     try:
         df = pd.read_excel(uploaded_file)
 
-        # Verificar colunas essenciais
-        required_cols = ['TELEFONE', 'MATRICULA']
+        # Verificar colunas essenciais, incluindo 'SITUACAO'
+        required_cols = ['TELEFONE', 'MATRICULA', 'SITUACAO']
         if not all(col in df.columns for col in required_cols):
-            st.error(f"Arquivo de Clientes: Colunas esperadas '{required_cols[0]}' e '{required_cols[1]}' não encontradas.")
+            st.error(f"Arquivo de Clientes: Colunas esperadas '{required_cols[0]}', '{required_cols[1]}' e '{required_cols[2]}' não encontradas.")
             return None
 
-        # Selecionar e renomear colunas
-        df_clientes = df[['TELEFONE', 'MATRICULA']].copy()
-        df_clientes.rename(columns={'TELEFONE': 'TELEFONE_CLIENTE', 'MATRICULA': 'MATRICULA_CLIENTE'}, inplace=True)
+        # Selecionar e renomear colunas, incluindo 'SITUACAO'
+        df_clientes = df[['TELEFONE', 'MATRICULA', 'SITUACAO']].copy()
+        df_clientes.rename(columns={'TELEFONE': 'TELEFONE_CLIENTE', 'MATRICULA': 'MATRICULA_CLIENTE', 'SITUACAO': 'DIVIDA'}, inplace=True)
 
         # Normalizar o telefone: remover '55' e '.0'
         df_clientes['TELEFONE_CLIENTE'] = df_clientes['TELEFONE_CLIENTE'].astype(str).str.replace(r'^55', '', regex=True).str.replace(r'\.0$', '', regex=True)
@@ -119,6 +122,10 @@ def load_and_process_clientes(uploaded_file):
 
         # Converter MATRICULA_CLIENTE para string e remover '.0'
         df_clientes['MATRICULA_CLIENTE'] = df_clientes['MATRICULA_CLIENTE'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+
+        # Converter DIVIDA para numérico, tratando vírgula como decimal e preenchendo NaN com 0
+        df_clientes['DIVIDA'] = df_clientes['DIVIDA'].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
+        df_clientes['DIVIDA'] = pd.to_numeric(df_clientes['DIVIDA'], errors='coerce').fillna(0)
 
         # Remover duplicatas de telefone para garantir um mapeamento 1:1 ou 1:N (se um telefone tiver múltiplas matrículas)
         # Para o propósito de "PROCV", vamos pegar a primeira matrícula encontrada para cada telefone único.
@@ -171,8 +178,8 @@ if executar_analise:
     if df_envios is not None and df_pagamentos is not None and df_clientes is not None:
         st.subheader("Processando e Cruzando Dados...")
 
-        # 1. Cruzar Envios com Clientes para obter a Matrícula
-        # Usar left merge para manter todas as notificações e adicionar a matrícula
+        # 1. Cruzar Envios com Clientes para obter a Matrícula e a Dívida
+        # Usar left merge para manter todas as notificações e adicionar a matrícula e dívida
         df_campanha = pd.merge(
             df_envios,
             df_clientes,
@@ -189,19 +196,12 @@ if executar_analise:
         df_campanha.drop(columns=['TELEFONE_CLIENTE'], inplace=True)
 
         # Remover duplicatas de notificação por matrícula e data de envio
-        # Se um cliente recebeu múltiplas notificações, consideramos a primeira para a análise de pagamento
-        # ou a mais relevante. Para simplificar, vamos considerar cada notificação única (telefone+data)
-        # que resultou em uma matrícula. Se a mesma matrícula recebeu múltiplas notificações,
-        # cada uma será um ponto de partida para a janela de pagamento.
-        # Para evitar contagem duplicada de "clientes notificados", vamos contar matrículas únicas.
         df_campanha_unique_notifications = df_campanha.drop_duplicates(subset=['MATRICULA', 'DATA_ENVIO'])
-
 
         if not df_campanha_unique_notifications.empty:
             st.subheader("Realizando Análise de Pagamentos Pós-Campanha")
 
             # 2. Cruzar com Pagamentos
-            # Usar left merge para manter todas as notificações da campanha e adicionar os pagamentos
             df_resultados = pd.merge(
                 df_campanha_unique_notifications,
                 df_pagamentos,
@@ -214,47 +214,55 @@ if executar_analise:
             df_pagamentos_campanha = df_resultados[
                 (df_resultados['DATA_PAGAMENTO'] > df_resultados['DATA_ENVIO']) &
                 (df_resultados['DATA_PAGAMENTO'] <= df_resultados['DATA_ENVIO'] + timedelta(days=janela_dias))
-            ].copy() # Usar .copy() para evitar SettingWithCopyWarning
-
-            # Remover pagamentos duplicados para a mesma matrícula na mesma data (se houver)
-            # Isso garante que um único pagamento não seja atribuído a múltiplas notificações
-            # se a mesma matrícula recebeu várias notificações e pagou uma vez.
-            # A lógica aqui é que cada linha em df_pagamentos_campanha representa um pagamento
-            # que pode ser atribuído a UMA notificação específica.
-            # Se uma matrícula pagou várias vezes, e cada pagamento caiu na janela de uma notificação,
-            # todos esses pagamentos serão contados.
-            # Se uma matrícula recebeu várias notificações e fez um único pagamento,
-            # esse pagamento será associado à primeira notificação que o "capturar" na janela.
-            # Para evitar superestimar, vamos garantir que cada pagamento seja contado uma única vez
-            # e associado à notificação mais próxima (ou primeira que se encaixa).
-
-            # Para a contagem de clientes que pagaram, precisamos de matrículas únicas.
-            clientes_que_pagaram_matriculas = df_pagamentos_campanha['MATRICULA'].nunique()
-
-            # Para o valor total, somamos todos os VALOR_PAGO dos pagamentos dentro da janela
-            valor_total_arrecadado = df_pagamentos_campanha['VALOR_PAGO'].sum() if not df_pagamentos_campanha.empty else 0
+            ].copy()
 
             # Total de clientes notificados (matrículas únicas que receberam notificação e foram encontradas na base de clientes)
             total_clientes_notificados = df_campanha_unique_notifications['MATRICULA'].nunique()
 
-            # Calcular taxa de eficiência
-            taxa_eficiencia = (clientes_que_pagaram_matriculas / total_clientes_notificados * 100) if total_clientes_notificados > 0 else 0
+            # Clientes que pagaram (matrículas únicas que fizeram pagamentos dentro da janela)
+            clientes_que_pagaram_matriculas = df_pagamentos_campanha['MATRICULA'].nunique()
+
+            # Valor total arrecadado na campanha (soma dos valores pagos dentro da janela)
+            valor_total_arrecadado = df_pagamentos_campanha['VALOR_PAGO'].sum() if not df_pagamentos_campanha.empty else 0
+
+            # Total da dívida dos clientes notificados (soma da coluna 'DIVIDA' para as matrículas únicas notificadas)
+            # Primeiro, pegamos as matrículas únicas notificadas
+            matriculas_notificadas_validas = df_campanha_unique_notifications['MATRICULA'].unique()
+            # Depois, filtramos o df_clientes original para somar a dívida apenas desses clientes
+            df_clientes_notificados_para_divida = df_clientes[df_clientes['MATRICULA_CLIENTE'].isin(matriculas_notificadas_validas)].copy()
+            total_divida_notificados = df_clientes_notificados_para_divida['DIVIDA'].sum()
+
+            # Calcular taxa de eficiência (clientes)
+            taxa_eficiencia_clientes = (clientes_que_pagaram_matriculas / total_clientes_notificados * 100) if total_clientes_notificados > 0 else 0
+
+            # Calcular taxa de eficiência (valor)
+            taxa_eficiencia_valor = (valor_total_arrecadado / total_divida_notificados * 100) if total_divida_notificados > 0 else 0
 
             # Calcular ticket médio
-            ticket_medio = valor_total_arrecadado / clientes_que_pagaram_matriculas 
+            ticket_medio = (valor_total_arrecadado / clientes_que_pagaram_matriculas) if clientes_que_pagaram_matriculas > 0 else 0
 
             st.subheader("Resultados da Análise da Campanha")
-            col1, col2, col3, col4, col5 = st.columns(5)
+
+            # Primeira linha de métricas
+            col1, col2, col3, col4 = st.columns(4)
             with col1:
                 st.metric(label="Total de clientes notificados", value=f"{total_clientes_notificados}")
             with col2:
-                st.metric(label="Clientes que pagaram dentro da janela", value=f"{clientes_que_pagaram_matriculas}")
+                st.metric(label="Clientes que pagaram na janela", value=f"{clientes_que_pagaram_matriculas}")
             with col3:
-                st.metric(label="Valor total arrecadado na campanha", value=f"R$ {valor_total_arrecadado:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+                st.metric(label="Taxa de eficiência (clientes)", value=f"{taxa_eficiencia_clientes:,.2f}%".replace(",", "X").replace(".", ",").replace("X", "."))
             with col4:
-                st.metric(label="Taxa de eficiência da campanha", value=f"{taxa_eficiencia:,.2f}%".replace(",", "X").replace(".", ",").replace("X", "."))
-            with col5:
                 st.metric(label="Ticket médio", value=f"R$ {ticket_medio:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+
+            # Segunda linha de métricas
+            col5, col6, col7 = st.columns(3)
+            with col5:
+                st.metric(label="Valor total arrecadado na campanha", value=f"R$ {valor_total_arrecadado:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+            with col6:
+                st.metric(label="Total da dívida dos notificados", value=f"R$ {total_divida_notificados:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+            with col7:
+                st.metric(label="Taxa de eficiência (valor)", value=f"{taxa_eficiencia_valor:,.2f}%".replace(",", "X").replace(".", ",").replace("X", "."))
+
 
             if not df_pagamentos_campanha.empty:
                 st.subheader(f"Pagamentos por Dia Após o Envio da Notificação (Janela de {janela_dias} dias)")
